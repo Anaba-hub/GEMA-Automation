@@ -1,0 +1,26 @@
+# ============================================================
+# config.py — Configuration globale du projet LinkedIn Scraper
+# ============================================================
+# Copiez ce fichier en config.py et remplissez vos valeurs :
+#   cp config.py.example config.py
+
+# --- Fichiers ---
+FICHIER_GEMA         = "gema.xlsx"         # Source unique (NE PAS ÉCRASER)
+FICHIER_OUTPUT_FINAL = "output_final.xlsx"  # Généré par main.py
+FICHIER_PROGRESSION  = "progress.json"
+
+# --- API Anthropic (Claude Vision — fallback si DOM vide) ---
+ANTHROPIC_API_KEY = "sk-ant-..."  # Votre clé API Anthropic
+CLAUDE_MODEL      = "claude-haiku-4-5-20251001"
+
+# --- Délais aléatoires anti-blocage LinkedIn (en secondes) ---
+DELAI_MIN = 4
+DELAI_MAX = 8
+
+# --- Profil Firefox ---
+# None = détection automatique (cherche *.default-release puis *.default).
+# Si Firefox ne trouve pas ton profil automatiquement,
+# ouvre Firefox → about:profiles, copie le chemin du profil
+# "utilisé actuellement" et colle-le ici.
+# Exemple : "/Users/user/Library/Application Support/Firefox/Profiles/xxxx.default-release"
+FIREFOX_PROFILE_PATH = None

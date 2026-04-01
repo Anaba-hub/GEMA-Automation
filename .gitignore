@@ -1,0 +1,23 @@
+# Fichiers sensibles
+config.py
+
+# Données Excel (entrée/sortie)
+*.xlsx
+
+# Fichiers générés par le scraper
+progress.json
+rapport.txt
+errors.log
+linkedin_scraper.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
