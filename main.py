@@ -40,7 +40,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
-from agents.agent_excel   import load_gema, est_lien_valide, save_row
+from agents.agent_excel   import load_gema, est_lien_valide, OutputWriter
 from agents.agent_browser import AgentBrowser
 from agents.agent_vision  import AgentVision
 from utils.logger         import get_logger
@@ -87,8 +87,10 @@ def _logger_erreur(contexte: str, e: Exception) -> None:
 
 
 def _cle(personne: dict) -> str:
-    """Clé unique pour progress.json : id si disponible, sinon nom_prenom."""
-    return personne["id"] if personne.get("id") else f"{personne['nom']}_{personne['prenom']}"
+    """Clé unique pour progress.json : id si disponible, sinon nom_prenom_annee_ecole."""
+    if personne.get("id"):
+        return personne["id"]
+    return f"{personne['nom']}_{personne['prenom']}_{personne.get('annee', '')}_{personne.get('ecole', '')}"
 
 
 def _pause(compteur: int) -> None:
@@ -173,13 +175,14 @@ class _SkipPerson(Exception):
 # ----------------------------------------------------------
 
 def _traiter(personnes: list, progression: dict, browser: AgentBrowser,
-             vision: AgentVision) -> None:
+             vision: AgentVision, output: OutputWriter) -> None:
     """
     Boucle unique sur toutes les personnes.
-    Sauvegarde output_final.xlsx + progress.json après chaque ligne.
+    Sauvegarde output_final.xlsx (via OutputWriter) + progress.json après chaque ligne.
     """
     traites_set = set(progression.get("traites", []))
     compteur    = 0  # pour les pauses
+    acces_refuse_consecutifs = 0  # détection de déconnexion LinkedIn
 
     for i, p in enumerate(personnes, start=1):
         cle    = _cle(p)
@@ -294,9 +297,28 @@ def _traiter(personnes: list, progression: dict, browser: AgentBrowser,
             data["statut"] = "erreur"
             _compteurs["erreur"] += 1
 
-        # --- Sauvegarde Excel ---
+        # --- Détection de déconnexion LinkedIn ---
+        if data["statut"] == "accès_refusé":
+            acces_refuse_consecutifs += 1
+            if acces_refuse_consecutifs >= 3:
+                log.error("=" * 60)
+                log.error("  3 accès refusés consécutifs détectés !")
+                log.error("  Votre session LinkedIn a probablement expiré.")
+                log.error("  Reconnectez-vous dans Firefox, puis appuyez sur Entrée.")
+                log.error("=" * 60)
+                try:
+                    input("  Appuyez sur Entrée pour reprendre… ")
+                    acces_refuse_consecutifs = 0
+                    log.info("Reprise après reconnexion.")
+                except (KeyboardInterrupt, EOFError):
+                    log.warning("Interruption pendant l'attente de reconnexion.")
+                    raise KeyboardInterrupt
+        else:
+            acces_refuse_consecutifs = 0
+
+        # --- Sauvegarde Excel (via OutputWriter, en mémoire) ---
         try:
-            save_row(config.FICHIER_OUTPUT_FINAL, data)
+            output.save_row(data)
         except Exception as e:
             _logger_erreur(f"save_row {label}", e)
 
@@ -393,11 +415,13 @@ def main():
     # 5. Initialisation des agents
     browser = AgentBrowser(firefox_profile_path=config.FIREFOX_PROFILE_PATH)
     vision  = AgentVision(api_key=config.ANTHROPIC_API_KEY, model=config.CLAUDE_MODEL)
+    output  = OutputWriter(config.FICHIER_OUTPUT_FINAL)
     browser.demarrer()
+    output.ouvrir()
 
     # 6. Traitement
     try:
-        _traiter(personnes, progression, browser, vision)
+        _traiter(personnes, progression, browser, vision, output)
 
     except KeyboardInterrupt:
         log.warning("")
@@ -409,6 +433,7 @@ def main():
         log.error("Erreur fatale — voir errors.log.")
 
     finally:
+        output.fermer()
         browser.fermer()
         try:
             _generer_rapport()

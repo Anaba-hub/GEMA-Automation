@@ -122,116 +122,160 @@ def load_gema(chemin: str = "gema.xlsx") -> list:
     return personnes
 
 
+# ----------------------------------------------------------
+# OutputWriter — gestion optimisée du fichier de sortie
+# ----------------------------------------------------------
+
+class OutputWriter:
+    """
+    Gestionnaire du fichier output_final.xlsx.
+
+    Garde le workbook ouvert en mémoire pour éviter de relire/réécrire
+    le fichier à chaque ligne. Sauvegarde périodiquement (toutes les
+    N lignes) et à la fermeture.
+    """
+
+    def __init__(self, chemin: str, intervalle_sauvegarde: int = 10):
+        self.chemin = chemin
+        self.intervalle = intervalle_sauvegarde
+        self._compteur_depuis_sauvegarde = 0
+        self._wb = None
+        self._ws = None
+        self._idx_map = {}
+
+    def ouvrir(self) -> None:
+        """Ouvre ou crée le fichier output_final.xlsx."""
+        if not Path(self.chemin).exists():
+            self._creer_output()
+
+        self._wb = openpyxl.load_workbook(self.chemin)
+        self._ws = self._wb.active
+        self._idx_map = {
+            str(cell.value or "").strip(): cell.column
+            for cell in self._ws[1]
+        }
+        log.info(f"OutputWriter ouvert : {self.chemin}")
+
+    def save_row(self, data: dict) -> None:
+        """
+        Ajoute ou met à jour une ligne dans le workbook en mémoire.
+        Sauvegarde sur disque toutes les N lignes.
+        """
+        if not self._ws:
+            raise RuntimeError("OutputWriter non ouvert. Appelez ouvrir() d'abord.")
+
+        id_data     = str(data.get("id", "")).strip()
+        nom_data    = str(data.get("nom", "")).strip()
+        prenom_data = str(data.get("prenom", "")).strip()
+
+        # Chercher une ligne existante à mettre à jour
+        ligne_cible = None
+        col_id     = self._idx_map.get("id", 1)
+        col_nom    = self._idx_map.get("Nom", 3)
+        col_prenom = self._idx_map.get("Prénom", 2)
+
+        for row in self._ws.iter_rows(min_row=2):
+            id_cell     = str(row[col_id - 1].value or "").strip()
+            nom_cell    = str(row[col_nom - 1].value or "").strip()
+            prenom_cell = str(row[col_prenom - 1].value or "").strip()
+
+            if id_data and id_cell == id_data:
+                ligne_cible = row[0].row
+                break
+            if not id_data and nom_cell == nom_data and prenom_cell == prenom_data:
+                ligne_cible = row[0].row
+                break
+
+        # Valeurs à écrire dans l'ordre de ENTETES_OUTPUT
+        valeurs = [
+            data.get("id", ""),
+            data.get("prenom", ""),
+            data.get("nom", ""),
+            data.get("annee", ""),
+            data.get("ecole", ""),
+            data.get("lien_retenu", ""),
+            data.get("lien_source", ""),
+            data.get("poste1", ""),
+            data.get("societe1", ""),
+            data.get("periode1", ""),
+            data.get("poste2", ""),
+            data.get("societe2", ""),
+            data.get("periode2", ""),
+            data.get("statut", ""),
+        ]
+
+        if ligne_cible:
+            for col_idx, valeur in enumerate(valeurs, start=1):
+                self._ws.cell(row=ligne_cible, column=col_idx, value=valeur)
+            log.info(f"Mise à jour : {prenom_data} {nom_data} → {data.get('statut', '')}")
+        else:
+            self._ws.append(valeurs)
+            log.info(f"Nouvelle ligne : {prenom_data} {nom_data} → {data.get('statut', '')}")
+
+        self._compteur_depuis_sauvegarde += 1
+        if self._compteur_depuis_sauvegarde >= self.intervalle:
+            self._sauvegarder_disque()
+
+    def fermer(self) -> None:
+        """Ajuste les largeurs de colonnes, sauvegarde et ferme le workbook."""
+        if not self._wb:
+            return
+
+        # Ajustement des largeurs uniquement à la fermeture
+        self._ajuster_largeurs()
+        self._sauvegarder_disque()
+        self._wb = None
+        self._ws = None
+        log.info(f"OutputWriter fermé : {self.chemin}")
+
+    def _sauvegarder_disque(self) -> None:
+        """Sauvegarde atomique sur disque."""
+        if not self._wb:
+            return
+        chemin_tmp = self.chemin + ".tmp"
+        self._wb.save(chemin_tmp)
+        os.replace(chemin_tmp, self.chemin)
+        self._compteur_depuis_sauvegarde = 0
+        log.debug(f"Sauvegarde disque : {self.chemin}")
+
+    def _ajuster_largeurs(self) -> None:
+        """Ajuste la largeur des colonnes (appelé uniquement à la fermeture)."""
+        if not self._ws:
+            return
+        for col in self._ws.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+            self._ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 70)
+
+    def _creer_output(self) -> None:
+        """Crée output_final.xlsx avec les en-têtes stylisés."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Résultats"
+        ws.append(ENTETES_OUTPUT)
+
+        fill  = PatternFill(fill_type="solid", fgColor="1F4E79")
+        font  = Font(bold=True, color="FFFFFF", size=11)
+        align = Alignment(horizontal="center", vertical="center")
+        for cell in ws[1]:
+            cell.fill      = fill
+            cell.font      = font
+            cell.alignment = align
+        ws.row_dimensions[1].height = 20
+
+        wb.save(self.chemin)
+        log.info(f"Fichier créé : {self.chemin}")
+
+
+# ----------------------------------------------------------
+# Fonction legacy (utilisée par retry.py)
+# ----------------------------------------------------------
+
 def save_row(chemin: str, data: dict) -> None:
     """
-    Ajoute ou met à jour une ligne dans output_final.xlsx.
-
-    Recherche une ligne existante par 'id' (si non vide),
-    sinon par 'nom' + 'prenom'. Met à jour si trouvée, ajoute sinon.
-    Crée le fichier avec en-têtes stylisés si inexistant.
-    Sauvegarde atomique via .tmp + os.replace.
-
-    data doit contenir les clés :
-      id, prenom, nom, annee, ecole,
-      lien_retenu, lien_source,
-      poste1, societe1, periode1,
-      poste2, societe2, periode2,
-      statut
+    Sauvegarde une ligne dans output_final.xlsx (mode standalone).
+    Utilisé par retry.py qui ne maintient pas un OutputWriter ouvert.
     """
-    if not Path(chemin).exists():
-        _creer_output(chemin)
-
-    wb = openpyxl.load_workbook(chemin)
-    ws = wb.active
-
-    # Mapping entête → numéro de colonne (1-based)
-    idx_map = {
-        str(cell.value or "").strip(): cell.column
-        for cell in ws[1]
-    }
-
-    id_data     = str(data.get("id", "")).strip()
-    nom_data    = str(data.get("nom", "")).strip()
-    prenom_data = str(data.get("prenom", "")).strip()
-
-    # Chercher une ligne existante à mettre à jour
-    ligne_cible = None
-    col_id     = idx_map.get("id", 1)
-    col_nom    = idx_map.get("Nom", 3)
-    col_prenom = idx_map.get("Prénom", 2)
-
-    for row in ws.iter_rows(min_row=2):
-        id_cell     = str(row[col_id - 1].value or "").strip()
-        nom_cell    = str(row[col_nom - 1].value or "").strip()
-        prenom_cell = str(row[col_prenom - 1].value or "").strip()
-
-        if id_data and id_cell == id_data:
-            ligne_cible = row[0].row
-            break
-        if not id_data and nom_cell == nom_data and prenom_cell == prenom_data:
-            ligne_cible = row[0].row
-            break
-
-    # Valeurs à écrire dans l'ordre de ENTETES_OUTPUT
-    valeurs = [
-        data.get("id", ""),
-        data.get("prenom", ""),
-        data.get("nom", ""),
-        data.get("annee", ""),
-        data.get("ecole", ""),
-        data.get("lien_retenu", ""),   # URL /in/ résolue
-        data.get("lien_source", ""),   # URL d'origine gema (/search/ ou /in/)
-        data.get("poste1", ""),
-        data.get("societe1", ""),
-        data.get("periode1", ""),
-        data.get("poste2", ""),
-        data.get("societe2", ""),
-        data.get("periode2", ""),
-        data.get("statut", ""),
-    ]
-
-    if ligne_cible:
-        for col_idx, valeur in enumerate(valeurs, start=1):
-            ws.cell(row=ligne_cible, column=col_idx, value=valeur)
-        log.info(
-            f"Mise à jour : {prenom_data} {nom_data} → {data.get('statut', '')}"
-        )
-    else:
-        ws.append(valeurs)
-        log.info(
-            f"Nouvelle ligne : {prenom_data} {nom_data} → {data.get('statut', '')}"
-        )
-
-    # Ajustement automatique de la largeur des colonnes
-    for col in ws.columns:
-        max_len = max((len(str(cell.value or "")) for cell in col), default=0)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 70)
-
-    # Sauvegarde atomique
-    chemin_tmp = chemin + ".tmp"
-    wb.save(chemin_tmp)
-    os.replace(chemin_tmp, chemin)
-
-
-# ----------------------------------------------------------
-# Helper interne
-# ----------------------------------------------------------
-
-def _creer_output(chemin: str) -> None:
-    """Crée output_final.xlsx avec les en-têtes stylisés."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Résultats"
-    ws.append(ENTETES_OUTPUT)
-
-    fill  = PatternFill(fill_type="solid", fgColor="1F4E79")
-    font  = Font(bold=True, color="FFFFFF", size=11)
-    align = Alignment(horizontal="center", vertical="center")
-    for cell in ws[1]:
-        cell.fill      = fill
-        cell.font      = font
-        cell.alignment = align
-    ws.row_dimensions[1].height = 20
-
-    wb.save(chemin)
-    log.info(f"Fichier créé : {chemin}")
+    writer = OutputWriter(chemin)
+    writer.ouvrir()
+    writer.save_row(data)
+    writer.fermer()

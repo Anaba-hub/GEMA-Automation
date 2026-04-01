@@ -305,11 +305,17 @@ class AgentBrowser:
 
     def _est_bloc_groupe(self, bloc) -> bool:
         """
-        Retourne True si le bloc contient des sous-listes
+        Retourne True si le bloc contient des sous-listes directes
         (CAS B : plusieurs rôles chez la même entreprise).
+        Restreint au ul enfant direct pour éviter les faux positifs.
         """
         try:
-            sous_listes = bloc.find_elements(By.CSS_SELECTOR, "ul li")
+            # Chercher un ul enfant direct du bloc (pas imbriqué profondément)
+            sous_listes = bloc.find_elements(By.XPATH, "./div//ul/li[.//span[contains(@class, 't-bold')]]")
+            if sous_listes:
+                return True
+            # Fallback : ul.pvs-list spécifique LinkedIn
+            sous_listes = bloc.find_elements(By.CSS_SELECTOR, ":scope > div ul.pvs-list li")
             return len(sous_listes) > 0
         except Exception:
             return False
@@ -406,7 +412,8 @@ class AgentBrowser:
 
     def take_screenshot(self, max_largeur: int = 1280) -> Optional[bytes]:
         """
-        Prend un screenshot de la page courante.
+        Prend un screenshot ciblé sur la section Expérience si possible,
+        sinon capture la page entière en fallback.
         Retourne les octets JPEG compressés, ou None en cas d'erreur.
         """
         if not self.driver:
@@ -417,7 +424,28 @@ class AgentBrowser:
             self._scroll_vers_experience()
             time.sleep(1)
 
-            png_bytes = self.driver.get_screenshot_as_png()
+            # Tenter un screenshot ciblé sur la section Expérience
+            png_bytes = None
+            for sel in [
+                "div#experience",
+                "section[data-section='experience']",
+                "section#experience",
+            ]:
+                try:
+                    section = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    # Capturer le parent pour inclure le contenu de la section
+                    parent = section.find_element(By.XPATH, "./..")
+                    png_bytes = parent.screenshot_as_png
+                    log.info(f"Screenshot ciblé section Expérience (sélecteur : {sel})")
+                    break
+                except (NoSuchElementException, Exception):
+                    continue
+
+            # Fallback : screenshot pleine page
+            if not png_bytes:
+                png_bytes = self.driver.get_screenshot_as_png()
+                log.info("Screenshot pleine page (section Expérience non trouvée)")
+
             img = Image.open(BytesIO(png_bytes))
 
             if img.width > max_largeur:

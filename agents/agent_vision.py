@@ -9,6 +9,7 @@
 # ============================================================
 
 import base64
+import time
 
 import anthropic
 
@@ -60,12 +61,14 @@ class AgentVision:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model  = model
 
-    def analyze_screenshot(self, image_bytes: bytes) -> str:
+    def analyze_screenshot(self, image_bytes: bytes, max_retries: int = 3) -> str:
         """
         Envoie le screenshot à l'API Claude Vision et retourne la réponse brute.
+        Retry automatique avec backoff exponentiel en cas d'erreur transitoire.
 
         Args:
             image_bytes : bytes de l'image JPEG
+            max_retries : nombre max de tentatives (défaut 3)
 
         Retourne :
             Texte brut de la réponse Claude, ou chaîne vide en cas d'erreur.
@@ -80,41 +83,54 @@ class AgentVision:
             f"({len(image_bytes) // 1024} Ko, modèle {self.model})…"
         )
 
-        try:
-            reponse = self.client.messages.create(
-                model=self.model,
-                max_tokens=600,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type":   "image",
-                                "source": {
-                                    "type":       "base64",
-                                    "media_type": "image/jpeg",
-                                    "data":       image_b64,
+        for tentative in range(1, max_retries + 1):
+            try:
+                reponse = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=600,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type":   "image",
+                                    "source": {
+                                        "type":       "base64",
+                                        "media_type": "image/jpeg",
+                                        "data":       image_b64,
+                                    },
                                 },
-                            },
-                            {"type": "text", "text": _PROMPT_VISION},
-                        ],
-                    }
-                ],
-            )
-            texte = reponse.content[0].text
-            log.info("Réponse Claude Vision reçue.")
-            log.debug(f"Réponse brute :\n{texte}")
-            return texte
+                                {"type": "text", "text": _PROMPT_VISION},
+                            ],
+                        }
+                    ],
+                )
+                texte = reponse.content[0].text
+                log.info("Réponse Claude Vision reçue.")
+                log.debug(f"Réponse brute :\n{texte}")
+                return texte
 
-        except anthropic.AuthenticationError:
-            log.error("Clé API Anthropic invalide. Vérifiez ANTHROPIC_API_KEY dans config.py.")
-            return ""
-        except anthropic.RateLimitError:
-            log.error("Limite de débit Anthropic atteinte. Réessayez dans quelques secondes.")
-            return ""
-        except Exception as e:
-            log.error(f"Erreur inattendue lors de l'appel Claude Vision : {e}")
-            return ""
+            except anthropic.AuthenticationError:
+                log.error("Clé API Anthropic invalide. Vérifiez ANTHROPIC_API_KEY dans config.py.")
+                return ""  # pas de retry, erreur permanente
+
+            except (anthropic.RateLimitError, anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+                delai = 2 ** tentative  # 2s, 4s, 8s
+                if tentative < max_retries:
+                    log.warning(
+                        f"Erreur transitoire (tentative {tentative}/{max_retries}) : {e}. "
+                        f"Retry dans {delai}s…"
+                    )
+                    time.sleep(delai)
+                else:
+                    log.error(f"Échec après {max_retries} tentatives : {e}")
+                    return ""
+
+            except Exception as e:
+                log.error(f"Erreur inattendue lors de l'appel Claude Vision : {e}")
+                return ""  # pas de retry, erreur inconnue
+
+        return ""
 
     def extract_positions(self, reponse_brute: str) -> list[dict]:
         """
