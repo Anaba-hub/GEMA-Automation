@@ -41,12 +41,16 @@ _compteurs   = {
 # Utilitaires
 # ----------------------------------------------------------
 
-def _caffeinate():
+def _empecher_veille():
     try:
-        subprocess.Popen(
-            ["caffeinate", "-i", "-w", str(os.getpid())],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        if sys.platform == "darwin":
+            subprocess.Popen(
+                ["caffeinate", "-i", "-w", str(os.getpid())],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        elif sys.platform == "win32":
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000003)
     except Exception:
         pass
 
@@ -306,7 +310,7 @@ def main():
     log.info(f"  LinkedIn Scraper — {_heure_debut:%Y-%m-%d %H:%M:%S}")
     log.info("=" * 50)
 
-    _caffeinate()
+    _empecher_veille()
 
     personnes = load_gema(config.FICHIER_GEMA)
     if not personnes:

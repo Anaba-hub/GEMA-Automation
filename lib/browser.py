@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import subprocess
+import sys
 import time
 from urllib.parse import urlparse, urlunparse
 
@@ -114,7 +115,7 @@ class Browser:
         self._verifier_firefox_ferme()
 
         options = Options()
-        profil = self.firefox_profile_path or self._detecter_profil_macos()
+        profil = self.firefox_profile_path or self._detecter_profil()
 
         if profil:
             options.add_argument("-profile")
@@ -267,13 +268,28 @@ class Browser:
     @staticmethod
     def _firefox_est_ouvert():
         try:
-            return subprocess.run(["pgrep", "-x", "firefox"], capture_output=True).returncode == 0
+            if sys.platform == "win32":
+                result = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq firefox.exe"],
+                    capture_output=True, text=True,
+                )
+                return "firefox.exe" in result.stdout.lower()
+            else:
+                return subprocess.run(["pgrep", "-x", "firefox"], capture_output=True).returncode == 0
         except FileNotFoundError:
             return False
 
     @staticmethod
-    def _detecter_profil_macos():
-        base = os.path.expanduser("~/Library/Application Support/Firefox/Profiles/")
+    def _detecter_profil():
+        if sys.platform == "win32":
+            base = os.path.join(os.environ.get("APPDATA", ""), "Mozilla", "Firefox", "Profiles")
+        elif sys.platform == "darwin":
+            base = os.path.expanduser("~/Library/Application Support/Firefox/Profiles")
+        else:
+            base = os.path.expanduser("~/.mozilla/firefox")
+
+        if not os.path.isdir(base):
+            return None
         for pattern in ["*.default-release", "*.default"]:
             matches = glob.glob(os.path.join(base, pattern))
             if matches:

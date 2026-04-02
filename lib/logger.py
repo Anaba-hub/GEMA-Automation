@@ -1,5 +1,10 @@
 import logging
+import os
 import sys
+
+# Activer les couleurs ANSI sur Windows 10+
+if sys.platform == "win32":
+    os.system("")  # active le mode VT100 dans CMD
 
 _RESET = "\033[0m"
 _BOLD  = "\033[1m"
