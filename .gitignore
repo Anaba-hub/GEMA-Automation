@@ -1,11 +1,11 @@
-# Fichiers sensibles
+# Configuration (contient des chemins locaux)
 config.py
 
-# Données Excel (entrée/sortie)
+# Données
 *.xlsx
-
-# Fichiers générés par le scraper
 progress.json
+
+# Logs et rapports
 rapport.txt
 errors.log
 linkedin_scraper.log
@@ -13,12 +13,9 @@ linkedin_scraper.log
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
 .venv/
 venv/
-env/
 
 # OS
 .DS_Store
-Thumbs.db
 .claude/
